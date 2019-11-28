@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # Download pretrained embeddings.
-curl -O http://downloads.cs.stanford.edu/nlp/data/glove.840B.300d.zip
-unzip glove.840B.300d.zip
-rm glove.840B.300d.zip
+#curl -O http://downloads.cs.stanford.edu/nlp/data/glove.840B.300d.zip
+#unzip glove.840B.300d.zip
+#rm glove.840B.300d.zip
 
 # Build custom kernels.
 TF_CFLAGS=( $(python -c 'import tensorflow as tf; print(" ".join(tf.sysconfig.get_compile_flags()))') )

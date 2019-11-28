@@ -15,3 +15,5 @@ if __name__ == "__main__":
   with tf.Session() as session:
     model.restore(session)
     model.evaluate(session, official_stdout=True)
+    # model.load_eval_data()
+    # print(model.eval_data)

@@ -1,6 +1,7 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
+#-*-encoding:utf-8-*-
 
 import os
 import operator
@@ -17,6 +18,11 @@ import util
 import coref_ops
 import conll
 import metrics
+import spacy
+nlp = spacy.load('en')
+import neuralcoref
+neuralcoref.add_to_pipe(nlp)
+
 
 class CorefModel(object):
   def __init__(self, config):
@@ -121,13 +127,19 @@ class CorefModel(object):
 
   def tensorize_example(self, example, is_training):
     clusters = example["clusters"]
-
     gold_mentions = sorted(tuple(m) for m in util.flatten(clusters))
+    # print('gold_mentions', gold_mentions)
+
     gold_mention_map = {m:i for i,m in enumerate(gold_mentions)}
+    # print('gold_mention_map', gold_mention_map)
+
     cluster_ids = np.zeros(len(gold_mentions))
+    print(cluster_ids)
+
     for cluster_id, cluster in enumerate(clusters):
       for mention in cluster:
         cluster_ids[gold_mention_map[tuple(mention)]] = cluster_id + 1
+    # print('cluster_ids', cluster_ids)
 
     sentences = example["sentences"]
     num_words = sum(len(s) for s in sentences)
@@ -139,16 +151,26 @@ class CorefModel(object):
     max_word_length = max(max(max(len(w) for w in s) for s in sentences), max(self.config["filter_widths"]))
     text_len = np.array([len(s) for s in sentences])
     tokens = [[""] * max_sentence_length for _ in sentences]
+
     context_word_emb = np.zeros([len(sentences), max_sentence_length, self.context_embeddings.size])
+    # print('context_word_emb', context_word_emb, context_word_emb.shape)
+
     head_word_emb = np.zeros([len(sentences), max_sentence_length, self.head_embeddings.size])
+    # print('head_word_emb', head_word_emb, head_word_emb.shape)
+
     char_index = np.zeros([len(sentences), max_sentence_length, max_word_length])
+    # print('char_index', char_index, char_index.shape)
+
     for i, sentence in enumerate(sentences):
       for j, word in enumerate(sentence):
         tokens[i][j] = word
         context_word_emb[i, j] = self.context_embeddings[word]
+
         head_word_emb[i, j] = self.head_embeddings[word]
         char_index[i, j, :len(word)] = [self.char_dict[c] for c in word]
     tokens = np.array(tokens)
+
+    # print('context_word_emb', context_word_emb)
 
     speaker_dict = { s:i for i,s in enumerate(set(speakers)) }
     speaker_ids = np.array([speaker_dict[s] for s in speakers])
@@ -271,9 +293,27 @@ class CorefModel(object):
     context_emb = tf.nn.dropout(context_emb, self.lexical_dropout) # [num_sentences, max_sentence_length, emb]
     head_emb = tf.nn.dropout(head_emb, self.lexical_dropout) # [num_sentences, max_sentence_length, emb]
 
-    text_len_mask = tf.sequence_mask(text_len, maxlen=max_sentence_length) # [num_sentence, max_sentence_length]
+    """ get context embedding with glove 300 and 50, the 300 dimension embedding use to concatenate char embedding and other
+    feature embedding. And the 50 dimension embedding with glove_300d_2w use to compute attention. They are encoding with 
+    context.
+      
+    1. context whole embedding equal language model elmo get token embedding(aggregated_lm_emb) concatenate char embedding
+    concatenate glove(300 dimension word2vec embedding).
+    shape: [num_sentences, max_sentence_length, emb]
+    
+    2. head_emb equal glove(50 dimension word2vec embedding concatenate char embedding)
+    shape: [num_sentences, max_sentence_length, emb]
+    """
 
+    text_len_mask = tf.sequence_mask(text_len, maxlen=max_sentence_length) # [num_sentence, max_sentence_length]
     context_outputs = self.lstm_contextualize(context_emb, text_len, text_len_mask) # [num_words, emb]
+
+    """Used context lstm encoder
+    input: context whole embedding  
+    output: context_output 
+    shape: [num_sentences * max_sentence_length, emb]
+    """
+
     num_words = util.shape(context_outputs, 0)
 
     genre_emb = tf.gather(tf.get_variable("genre_embeddings", [len(self.genres), self.config["feature_size"]]), genre) # [emb]
@@ -284,6 +324,9 @@ class CorefModel(object):
 
     candidate_starts = tf.tile(tf.expand_dims(tf.range(num_words), 1), [1, self.max_span_width]) # [num_words, max_span_width]
     candidate_ends = candidate_starts + tf.expand_dims(tf.range(self.max_span_width), 0) # [num_words, max_span_width]
+
+    # print('candidate_starts_1', candidate_starts)
+
     candidate_start_sentence_indices = tf.gather(flattened_sentence_indices, candidate_starts) # [num_words, max_span_width]
     candidate_end_sentence_indices = tf.gather(flattened_sentence_indices, tf.minimum(candidate_ends, num_words - 1)) # [num_words, max_span_width]
     candidate_mask = tf.logical_and(candidate_ends < num_words, tf.equal(candidate_start_sentence_indices, candidate_end_sentence_indices)) # [num_words, max_span_width]
@@ -292,8 +335,13 @@ class CorefModel(object):
     candidate_ends = tf.boolean_mask(tf.reshape(candidate_ends, [-1]), flattened_candidate_mask) # [num_candidates]
     candidate_sentence_indices = tf.boolean_mask(tf.reshape(candidate_start_sentence_indices, [-1]), flattened_candidate_mask) # [num_candidates]
 
-    candidate_cluster_ids = self.get_candidate_labels(candidate_starts, candidate_ends, gold_starts, gold_ends, cluster_ids) # [num_candidates]
+    # print('sentence_indices', sentence_indices)
+    # print('candidate_starts', candidate_starts)
+    # print('candidate_ends', candidate_ends)
+    # print('candidate_start_sentence_indices', candidate_start_sentence_indices)
+    # print('candidate_sentence_indices:', candidate_sentence_indices)
 
+    candidate_cluster_ids = self.get_candidate_labels(candidate_starts, candidate_ends, gold_starts, gold_ends, cluster_ids) # [num_candidates]
     candidate_span_emb = self.get_span_emb(flattened_head_emb, context_outputs, candidate_starts, candidate_ends) # [num_candidates, emb]
     candidate_mention_scores =  self.get_mention_scores(candidate_span_emb) # [k, 1]
     candidate_mention_scores = tf.squeeze(candidate_mention_scores, 1) # [k]
@@ -318,10 +366,17 @@ class CorefModel(object):
 
     c = tf.minimum(self.config["max_top_antecedents"], k)
 
+    """Stage 1 competed: k candidate mentions.
+    """
+
     if self.config["coarse_to_fine"]:
       top_antecedents, top_antecedents_mask, top_fast_antecedent_scores, top_antecedent_offsets = self.coarse_to_fine_pruning(top_span_emb, top_span_mention_scores, c)
     else:
       top_antecedents, top_antecedents_mask, top_fast_antecedent_scores, top_antecedent_offsets = self.distance_pruning(top_span_emb, top_span_mention_scores, c)
+
+    """Stage 2 competed: get each of k mensions c antecedents 
+    shape: [k, c]   
+    """
 
     dummy_scores = tf.zeros([k, 1]) # [k, 1]
     for i in range(self.config["coref_depth"]):
@@ -335,6 +390,14 @@ class CorefModel(object):
           f = tf.sigmoid(util.projection(tf.concat([top_span_emb, attended_span_emb], 1), util.shape(top_span_emb, -1))) # [k, emb]
           top_span_emb = f * attended_span_emb + (1 - f) * top_span_emb # [k, emb]
 
+    """Stage 3 used original paper section 3 function: the antecedent and top_span composed a pairs (coref entity, demonstraction
+    pronoun) and computer the pair of score s(gi, gj), s(gi, gj) = top_fast_antecedent_scores + get_slow_antecdents, via softmax,
+    get the weights of each k span's (c + 1) antecedents weight. P(yi), yi is i mention in top_span. This is a attention mechanism
+    get a new embedding ai, ai are calculate by attention mechanism. And then concatenate ai and gi. matmul W and via sigmoid to 
+    get a gatekeeper(fi). Finally, gi_final = fi * gi + (1 - fi) * ai. 
+    shape: [k, emb]
+    """
+
     top_antecedent_scores = tf.concat([dummy_scores, top_antecedent_scores], 1) # [k, c + 1]
 
     top_antecedent_cluster_ids = tf.gather(top_span_cluster_ids, top_antecedents) # [k, c]
@@ -344,7 +407,16 @@ class CorefModel(object):
     pairwise_labels = tf.logical_and(same_cluster_indicator, non_dummy_indicator) # [k, c]
     dummy_labels = tf.logical_not(tf.reduce_any(pairwise_labels, 1, keepdims=True)) # [k, 1]
     top_antecedent_labels = tf.concat([dummy_labels, pairwise_labels], 1) # [k, c + 1]
+
+    # print('top_antecedent_scores', top_antecedent_scores, top_antecedent_scores.shape)
+    # print('top_antecedent_labels', top_antecedent_labels, top_antecedent_labels.shape)
+
     loss = self.softmax_loss(top_antecedent_scores, top_antecedent_labels) # [k]
+
+    """result of k antecedents's softmax loss. 
+    shape: [k]
+    """
+
     loss = tf.reduce_sum(loss) # []
 
     return [candidate_starts, candidate_ends, candidate_mention_scores, top_span_starts, top_span_ends, top_antecedents, top_antecedent_scores], loss
@@ -387,9 +459,17 @@ class CorefModel(object):
       return util.ffnn(span_emb, self.config["ffnn_depth"], self.config["ffnn_size"], 1, self.dropout) # [k, 1]
 
   def softmax_loss(self, antecedent_scores, antecedent_labels):
+
+    # print('antecedent_scores', antecedent_scores, antecedent_scores.shape)
+    # print('antecedent_label', antecedent_labels, antecedent_labels.shape)
+
     gold_scores = antecedent_scores + tf.log(tf.to_float(antecedent_labels)) # [k, max_ant + 1]
     marginalized_gold_scores = tf.reduce_logsumexp(gold_scores, [1]) # [k]
     log_norm = tf.reduce_logsumexp(antecedent_scores, [1]) # [k]
+
+    # print('marginalized_gold_scores', marginalized_gold_scores)
+    # print('log_norm', log_norm)
+
     return log_norm - marginalized_gold_scores # [k]
 
   def bucket_distance(self, distances):
@@ -538,6 +618,7 @@ class CorefModel(object):
       with open(self.config["eval_path"]) as f:
         self.eval_data = [load_line(l) for l in f.readlines()]
       num_words = sum(tensorized_example[2].sum() for tensorized_example, _ in self.eval_data)
+
       print("Loaded {} eval examples.".format(len(self.eval_data)))
 
   def evaluate(self, session, official_stdout=False):
@@ -547,11 +628,108 @@ class CorefModel(object):
     coref_evaluator = metrics.CorefEvaluator()
 
     for example_num, (tensorized_example, example) in enumerate(self.eval_data):
-      _, _, _, _, _, _, _, _, _, gold_starts, gold_ends, _ = tensorized_example
+      tokens, context_word_emb, head_word_emb, lm_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, _ = tensorized_example
+
+      # print('tokens', tokens, tokens.shape)
+      # print('context_word_emb', context_word_emb, context_word_emb.shape)
+      # print('head_word_emb', head_word_emb, head_word_emb.shape)
+      # print('lm', lm_emb, lm_emb.shape)
+
       feed_dict = {i:t for i,t in zip(self.input_tensors, tensorized_example)}
       candidate_starts, candidate_ends, candidate_mention_scores, top_span_starts, top_span_ends, top_antecedents, top_antecedent_scores = session.run(self.predictions, feed_dict=feed_dict)
+
+      # print('candidate_starts', candidate_starts)
+      # print('end', candidate_ends)
+      # print('top_span_starts', top_span_starts, top_span_ends.shape)
+      # print('top_span_end', top_span_ends, top_span_ends.shape)
+      # print('top_antecedent_scores', top_antecedent_scores)
+
+
       predicted_antecedents = self.get_predicted_antecedents(top_antecedents, top_antecedent_scores)
+
+      # print('predicted_antecedents', predicted_antecedents)
+
       coref_predictions[example["doc_key"]] = self.evaluate_coref(top_span_starts, top_span_ends, predicted_antecedents, example["clusters"], coref_evaluator)
+      if example_num % 10 == 0:
+        print("Evaluated {}/{} examples.".format(example_num + 1, len(self.eval_data)))
+
+
+    print('coref_predictions:', coref_predictions, len(coref_predictions))
+
+    summary_dict = {}
+    conll_results = conll.evaluate_conll(self.config["conll_eval_path"], coref_predictions, official_stdout)
+    average_f1 = sum(results["f"] for results in conll_results.values()) / len(conll_results)
+    summary_dict["Average F1 (conll)"] = average_f1
+    print("Average F1 (conll): {:.2f}%".format(average_f1))
+
+    p,r,f = coref_evaluator.get_prf()
+    summary_dict["Average F1 (py)"] = f
+    print("Average F1 (py): {:.2f}%".format(f * 100))
+    summary_dict["Average precision (py)"] = p
+    print("Average precision (py): {:.2f}%".format(p * 100))
+    summary_dict["Average recall (py)"] = r
+    print("Average recall (py): {:.2f}%".format(r * 100))
+
+    return util.make_summary(summary_dict), average_f1
+
+  def evaluate_neuralcoref(self, session, official_stdout=False):
+    self.load_eval_data()
+    coref_predictions = {}
+    coref_evaluator = metrics.CorefEvaluator()
+    import re
+    fuhao = re.compile(r'[\,|\.|\?|\!|\']')
+    for example_num, (tensorized_example, example) in enumerate(self.eval_data):
+      # _, _, _, _, _, _, _, _, _, gold_starts, gold_ends, _ = tensorized_example
+      # feed_dict = {i:t for i,t in zip(self.input_tensors, tensorized_example)}
+      # candidate_starts, candidate_ends, candidate_mention_scores, top_span_starts, top_span_ends, top_antecedents, top_antecedent_scores = session.run(self.predictions, feed_dict=feed_dict)
+      ss1 = sum(example["sentences"], [])
+      ss = ''
+      for idx, i in enumerate(ss1):
+        if fuhao.match(i) or idx == 0:
+          ss = ss + i
+        elif idx != 0:
+          ss = ss + ' ' + i
+      doc = nlp(ss)
+      # predicted_antecedents = self.get_predicted_antecedents(top_antecedents, top_antecedent_scores)
+      if not doc._.has_coref:
+        coref_predictions[example["doc_key"]] = []
+        continue
+      # sample : [((16, 16), (19, 23)), ((25, 27), (42, 44), (57, 59)), ((65, 66), (82, 83), (101, 102))]
+      predictions = []
+      top_span_starts = []
+      top_span_ends = []
+      lookup = {}
+      conll_token_index = 0
+      conll_ci = 0
+      spacy_ci = 0
+      print()
+      print('ss', ss)
+      for i in range(len(doc)):
+        st = doc[i].text
+        print(st)
+        spacy_ci += len(st)
+        while conll_ci < spacy_ci:
+          conll_ci += len(ss1[conll_token_index])
+          conll_token_index += 1
+        lookup[i] = conll_token_index - 1
+        print(lookup)
+      for cluster in doc._.coref_clusters:
+        _tmp = []
+        print('cluster:', cluster)
+        for mention in cluster:
+          print('mention:', mention)
+          print('start:', mention.start)
+          print('end:', mention.end)
+          print(ss[mention.start:mention.end])
+          print('look:', ss[lookup[mention.start]:lookup[mention.end]])
+          # print()
+          _tmp.append((lookup[mention.start], lookup[mention.end - 1]))
+          top_span_starts.append(mention.start)
+          top_span_ends.append(mention.end - 1)
+        predictions.append(tuple(_tmp))
+        # print(predictions)
+      coref_predictions[example["doc_key"]] = predictions
+      # print(coref_predictions)
       if example_num % 10 == 0:
         print("Evaluated {}/{} examples.".format(example_num + 1, len(self.eval_data)))
 
@@ -561,7 +739,7 @@ class CorefModel(object):
     summary_dict["Average F1 (conll)"] = average_f1
     print("Average F1 (conll): {:.2f}%".format(average_f1))
 
-    p,r,f = coref_evaluator.get_prf()
+    p, r, f = coref_evaluator.get_prf()
     summary_dict["Average F1 (py)"] = f
     print("Average F1 (py): {:.2f}%".format(f * 100))
     summary_dict["Average precision (py)"] = p

@@ -14,8 +14,10 @@ import collections
 BEGIN_DOCUMENT_REGEX = re.compile(r"#begin document \((.*)\); part (\d+)")
 COREF_RESULTS_REGEX = re.compile(r".*Coreference: Recall: \([0-9.]+ / [0-9.]+\) ([0-9.]+)%\tPrecision: \([0-9.]+ / [0-9.]+\) ([0-9.]+)%\tF1: ([0-9.]+)%.*", re.DOTALL)
 
+
 def get_doc_key(doc_id, part):
   return "{}_{}".format(doc_id, int(part))
+
 
 def output_conll(input_file, output_file, predictions):
   prediction_map = {}
@@ -85,7 +87,12 @@ def official_conll_eval(gold_path, predicted_path, metric, official_stdout=False
     print("Official result for {}".format(metric))
     print(stdout)
 
+  print('stdout:', stdout)
+
   coref_results_match = re.match(COREF_RESULTS_REGEX, stdout)
+
+  print('coref_results_match:', coref_results_match)
+
   recall = float(coref_results_match.group(1))
   precision = float(coref_results_match.group(2))
   f1 = float(coref_results_match.group(3))

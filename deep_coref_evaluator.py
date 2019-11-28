@@ -1,7 +1,3 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import numpy as np
 from collections import Counter
 from sklearn.utils.linear_assignment_ import linear_assignment
@@ -12,30 +8,8 @@ def f1(p_num, p_den, r_num, r_den, beta=1):
     r = 0 if r_den == 0 else r_num / float(r_den)
     return 0 if p + r == 0 else (1 + beta * beta) * p * r / (beta * beta * p + r)
 
-class CorefEvaluator(object):
-    def __init__(self):
-        self.evaluators = [Evaluator(m) for m in (muc, b_cubed, ceafe)]
 
-    def update(self, predicted, gold, mention_to_predicted, mention_to_gold):
-        for e in self.evaluators:
-            print("mention_to_gold", mention_to_gold)
-            print("mention_to_predicted", mention_to_predicted)
-
-            e.update(predicted, gold, mention_to_predicted, mention_to_gold)
-
-    def get_f1(self):
-        return sum(e.get_f1() for e in self.evaluators) / len(self.evaluators)
-
-    def get_recall(self):
-        return sum(e.get_recall() for e in self.evaluators) / len(self.evaluators)
-
-    def get_precision(self):
-        return sum(e.get_precision() for e in self.evaluators) / len(self.evaluators)
-
-    def get_prf(self):
-        return self.get_precision(), self.get_recall(), self.get_f1()
-
-class Evaluator(object):
+class Evaluator:
     def __init__(self, metric, beta=1):
         self.p_num = 0
         self.p_den = 0
@@ -44,12 +18,12 @@ class Evaluator(object):
         self.metric = metric
         self.beta = beta
 
-    def update(self, predicted, gold, mention_to_predicted, mention_to_gold):
+    def update(self, document):
         if self.metric == ceafe:
-            pn, pd, rn, rd = self.metric(predicted, gold)
+            pn, pd, rn, rd = self.metric(document.clusters, document.gold)
         else:
-            pn, pd = self.metric(predicted, mention_to_gold)
-            rn, rd = self.metric(gold, mention_to_predicted)
+            pn, pd = self.metric(document.clusters, document.mention_to_gold)
+            rn, rd = self.metric(document.gold, document.mention_to_cluster)
         self.p_num += pn
         self.p_den += pd
         self.r_num += rn
@@ -90,7 +64,7 @@ def b_cubed(clusters, mention_to_gold):
         for m in c:
             if m in mention_to_gold:
                 gold_counts[tuple(mention_to_gold[m])] += 1
-        for c2, count in gold_counts.items():
+        for c2, count in gold_counts.iteritems():
             if len(c2) != 1:
                 correct += count * count
 
@@ -149,3 +123,13 @@ def lea(clusters, mention_to_gold):
         dem += len(c)
 
     return num, dem
+
+
+if __name__ == '__main__':
+    gold = [[[1, 4], [6, 7], [15, 18]], [[56, 89], [90, 97]]]
+    system = [[[2, 5], [6, 7], [22, 33]], [[56, 89], [90, 97]]]
+    s, s1, s2, s3 = ceafe(gold, system)
+    print(s)
+    print(s1)
+    print(s2)
+    print(s3)
