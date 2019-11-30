@@ -98,6 +98,7 @@ def official_conll_eval(gold_path, predicted_path, metric, official_stdout=False
   f1 = float(coref_results_match.group(3))
   return { "r": recall, "p": precision, "f": f1 }
 
+
 def evaluate_conll(gold_path, predictions, official_stdout=False):
   with tempfile.NamedTemporaryFile(delete=False, mode="w") as prediction_file:
     with open(gold_path, "r") as gold_file:

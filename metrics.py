@@ -18,8 +18,8 @@ class CorefEvaluator(object):
 
     def update(self, predicted, gold, mention_to_predicted, mention_to_gold):
         for e in self.evaluators:
-            print("mention_to_gold", mention_to_gold)
-            print("mention_to_predicted", mention_to_predicted)
+            # print("mention_mto_gold", mention_to_gold)
+            # print("mention_to_predicted", mention_to_predicted)
 
             e.update(predicted, gold, mention_to_predicted, mention_to_gold)
 

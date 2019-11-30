@@ -18,10 +18,11 @@ import util
 import coref_ops
 import conll
 import metrics
-import spacy
-nlp = spacy.load('en')
-import neuralcoref
-neuralcoref.add_to_pipe(nlp)
+import tools
+# import spacy
+# nlp = spacy.load('en')
+# import neuralcoref
+# neuralcoref.add_to_pipe(nlp)
 
 
 class CorefModel(object):
@@ -134,7 +135,7 @@ class CorefModel(object):
     # print('gold_mention_map', gold_mention_map)
 
     cluster_ids = np.zeros(len(gold_mentions))
-    print(cluster_ids)
+    # print(cluster_ids)
 
     for cluster_id, cluster in enumerate(clusters):
       for mention in cluster:
@@ -653,8 +654,9 @@ class CorefModel(object):
       if example_num % 10 == 0:
         print("Evaluated {}/{} examples.".format(example_num + 1, len(self.eval_data)))
 
-
     print('coref_predictions:', coref_predictions, len(coref_predictions))
+    tools.write_json('/home/patsnap/PycharmProjects/e2e/e2e-coref/coref_predictions.json', coref_predictions)
+
 
     summary_dict = {}
     conll_results = conll.evaluate_conll(self.config["conll_eval_path"], coref_predictions, official_stdout)
@@ -672,79 +674,80 @@ class CorefModel(object):
 
     return util.make_summary(summary_dict), average_f1
 
-  def evaluate_neuralcoref(self, session, official_stdout=False):
-    self.load_eval_data()
-    coref_predictions = {}
-    coref_evaluator = metrics.CorefEvaluator()
-    import re
-    fuhao = re.compile(r'[\,|\.|\?|\!|\']')
-    for example_num, (tensorized_example, example) in enumerate(self.eval_data):
-      # _, _, _, _, _, _, _, _, _, gold_starts, gold_ends, _ = tensorized_example
-      # feed_dict = {i:t for i,t in zip(self.input_tensors, tensorized_example)}
-      # candidate_starts, candidate_ends, candidate_mention_scores, top_span_starts, top_span_ends, top_antecedents, top_antecedent_scores = session.run(self.predictions, feed_dict=feed_dict)
-      ss1 = sum(example["sentences"], [])
-      ss = ''
-      for idx, i in enumerate(ss1):
-        if fuhao.match(i) or idx == 0:
-          ss = ss + i
-        elif idx != 0:
-          ss = ss + ' ' + i
-      doc = nlp(ss)
-      # predicted_antecedents = self.get_predicted_antecedents(top_antecedents, top_antecedent_scores)
-      if not doc._.has_coref:
-        coref_predictions[example["doc_key"]] = []
-        continue
-      # sample : [((16, 16), (19, 23)), ((25, 27), (42, 44), (57, 59)), ((65, 66), (82, 83), (101, 102))]
-      predictions = []
-      top_span_starts = []
-      top_span_ends = []
-      lookup = {}
-      conll_token_index = 0
-      conll_ci = 0
-      spacy_ci = 0
-      print()
-      print('ss', ss)
-      for i in range(len(doc)):
-        st = doc[i].text
-        print(st)
-        spacy_ci += len(st)
-        while conll_ci < spacy_ci:
-          conll_ci += len(ss1[conll_token_index])
-          conll_token_index += 1
-        lookup[i] = conll_token_index - 1
-        print(lookup)
-      for cluster in doc._.coref_clusters:
-        _tmp = []
-        print('cluster:', cluster)
-        for mention in cluster:
-          print('mention:', mention)
-          print('start:', mention.start)
-          print('end:', mention.end)
-          print(ss[mention.start:mention.end])
-          print('look:', ss[lookup[mention.start]:lookup[mention.end]])
-          # print()
-          _tmp.append((lookup[mention.start], lookup[mention.end - 1]))
-          top_span_starts.append(mention.start)
-          top_span_ends.append(mention.end - 1)
-        predictions.append(tuple(_tmp))
-        # print(predictions)
-      coref_predictions[example["doc_key"]] = predictions
-      # print(coref_predictions)
-      if example_num % 10 == 0:
-        print("Evaluated {}/{} examples.".format(example_num + 1, len(self.eval_data)))
 
-    summary_dict = {}
-    conll_results = conll.evaluate_conll(self.config["conll_eval_path"], coref_predictions, official_stdout)
-    average_f1 = sum(results["f"] for results in conll_results.values()) / len(conll_results)
-    summary_dict["Average F1 (conll)"] = average_f1
-    print("Average F1 (conll): {:.2f}%".format(average_f1))
-
-    p, r, f = coref_evaluator.get_prf()
-    summary_dict["Average F1 (py)"] = f
-    print("Average F1 (py): {:.2f}%".format(f * 100))
-    summary_dict["Average precision (py)"] = p
-    print("Average precision (py): {:.2f}%".format(p * 100))
-    summary_dict["Average recall (py)"] = r
-    print("Average recall (py): {:.2f}%".format(r * 100))
-
-    return util.make_summary(summary_dict), average_f1
+  # def evaluate_neuralcoref(self, session, official_stdout=False):
+  #   self.load_eval_data()
+  #   coref_predictions = {}
+  #   coref_evaluator = metrics.CorefEvaluator()
+  #   import re
+  #   fuhao = re.compile(r'[\,|\.|\?|\!|\']')
+  #   for example_num, (tensorized_example, example) in enumerate(self.eval_data):
+  #     # _, _, _, _, _, _, _, _, _, gold_starts, gold_ends, _ = tensorized_example
+  #     # feed_dict = {i:t for i,t in zip(self.input_tensors, tensorized_example)}
+  #     # candidate_starts, candidate_ends, candidate_mention_scores, top_span_starts, top_span_ends, top_antecedents, top_antecedent_scores = session.run(self.predictions, feed_dict=feed_dict)
+  #     ss1 = sum(example["sentences"], [])
+  #     ss = ''
+  #     for idx, i in enumerate(ss1):
+  #       if fuhao.match(i) or idx == 0:
+  #         ss = ss + i
+  #       elif idx != 0:
+  #         ss = ss + ' ' + i
+  #     doc = nlp(ss)
+  #     # predicted_antecedents = self.get_predicted_antecedents(top_antecedents, top_antecedent_scores)
+  #     if not doc._.has_coref:
+  #       coref_predictions[example["doc_key"]] = []
+  #       continue
+  #     # sample : [((16, 16), (19, 23)), ((25, 27), (42, 44), (57, 59)), ((65, 66), (82, 83), (101, 102))]
+  #     predictions = []
+  #     top_span_starts = []
+  #     top_span_ends = []
+  #     lookup = {}
+  #     conll_token_index = 0
+  #     conll_ci = 0
+  #     spacy_ci = 0
+  #     print()
+  #     print('ss', ss)
+  #     for i in range(len(doc)):
+  #       st = doc[i].text
+  #       print(st)
+  #       spacy_ci += len(st)
+  #       while conll_ci < spacy_ci:
+  #         conll_ci += len(ss1[conll_token_index])
+  #         conll_token_index += 1
+  #       lookup[i] = conll_token_index - 1
+  #       print(lookup)
+  #     for cluster in doc._.coref_clusters:
+  #       _tmp = []
+  #       print('cluster:', cluster)
+  #       for mention in cluster:
+  #         print('mention:', mention)
+  #         print('start:', mention.start)
+  #         print('end:', mention.end)
+  #         print(ss[mention.start:mention.end])
+  #         print('look:', ss[lookup[mention.start]:lookup[mention.end]])
+  #         # print()
+  #         _tmp.append((lookup[mention.start], lookup[mention.end - 1]))
+  #         top_span_starts.append(mention.start)
+  #         top_span_ends.append(mention.end - 1)
+  #       predictions.append(tuple(_tmp))
+  #       # print(predictions)
+  #     coref_predictions[example["doc_key"]] = predictions
+  #     # print(coref_predictions)
+  #     if example_num % 10 == 0:
+  #       print("Evaluated {}/{} examples.".format(example_num + 1, len(self.eval_data)))
+  #
+  #   summary_dict = {}
+  #   conll_results = conll.evaluate_conll(self.config["conll_eval_path"], coref_predictions, official_stdout)
+  #   average_f1 = sum(results["f"] for results in conll_results.values()) / len(conll_results)
+  #   summary_dict["Average F1 (conll)"] = average_f1
+  #   print("Average F1 (conll): {:.2f}%".format(average_f1))
+  #
+  #   p, r, f = coref_evaluator.get_prf()
+  #   summary_dict["Average F1 (py)"] = f
+  #   print("Average F1 (py): {:.2f}%".format(f * 100))
+  #   summary_dict["Average precision (py)"] = p
+  #   print("Average precision (py): {:.2f}%".format(p * 100))
+  #   summary_dict["Average recall (py)"] = r
+  #   print("Average recall (py): {:.2f}%".format(r * 100))
+  #
+  #   return util.make_summary(summary_dict), average_f1
