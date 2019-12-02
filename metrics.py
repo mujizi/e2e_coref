@@ -12,9 +12,12 @@ def f1(p_num, p_den, r_num, r_den, beta=1):
     r = 0 if r_den == 0 else r_num / float(r_den)
     return 0 if p + r == 0 else (1 + beta * beta) * p * r / (beta * beta * p + r)
 
+
 class CorefEvaluator(object):
     def __init__(self):
         self.evaluators = [Evaluator(m) for m in (muc, b_cubed, ceafe)]
+        print("evaluators len:", len(self.evaluators))
+        print("evaluators:", self.evaluators)
 
     def update(self, predicted, gold, mention_to_predicted, mention_to_gold):
         for e in self.evaluators:
@@ -34,6 +37,22 @@ class CorefEvaluator(object):
 
     def get_prf(self):
         return self.get_precision(), self.get_recall(), self.get_f1()
+
+    def get_all_f1(self):
+        all_f1 = [e.get_precision() for e in self.evaluators]
+        return all_f1[0], all_f1[1], all_f1[2]
+
+    def get_all_precision(self):
+        all_precision = [e.get_precision() for e in self.evaluators]
+        return all_precision[0], all_precision[1], all_precision[2]
+
+    def get_all_recall(self):
+        all_recall = [e.get_recall() for e in self.evaluators]
+        return all_recall[0], all_recall[1], all_recall[2]
+
+    def get_all_prf(self):
+        return self.get_all_precision(), self.get_all_recall(), self.get_all_f1()
+
 
 class Evaluator(object):
     def __init__(self, metric, beta=1):
