@@ -481,7 +481,9 @@ class CorefModel(object):
     logspace_idx = tf.to_int32(tf.floor(tf.log(tf.to_float(distances))/math.log(2))) + 3
     use_identity = tf.to_int32(distances <= 4)
     combined_idx = use_identity * distances + (1 - use_identity) * logspace_idx
-    return tf.clip_by_value(combined_idx, 0, 9)
+    # return tf.clip_by_value(combined_idx, 0, 9)
+    return tf.clip_by_value(combined_idx, 0, 12)   # 256+
+
 
   def get_slow_antecedent_scores(self, top_span_emb, top_antecedents, top_antecedent_emb, top_antecedent_offsets, top_span_speaker_ids, genre_emb):
     k = util.shape(top_span_emb, 0)
@@ -499,8 +501,14 @@ class CorefModel(object):
       feature_emb_list.append(tiled_genre_emb)
 
     if self.config["use_features"]:
+
+      """ i think of that if want to increase the distance of cluster pair, we can change the [10] antecedent_distance_emb,
+      and the bucket_distance function make some change in tf.clip_value xxx.
+      """
+
       antecedent_distance_buckets = self.bucket_distance(top_antecedent_offsets) # [k, c]
-      antecedent_distance_emb = tf.gather(tf.get_variable("antecedent_distance_emb", [10, self.config["feature_size"]]), antecedent_distance_buckets) # [k, c]
+      # antecedent_distance_emb = tf.gather(tf.get_variable("antecedent_distance_emb", [10, self.config["feature_size"]]), antecedent_distance_buckets) # [k, c]
+      antecedent_distance_emb = tf.gather(tf.get_variable("antecedent_distance_emb", [13, self.config["feature_size"]]), antecedent_distance_buckets)  # [k, c]
       feature_emb_list.append(antecedent_distance_emb)
 
     feature_emb = tf.concat(feature_emb_list, 2) # [k, c, emb]
