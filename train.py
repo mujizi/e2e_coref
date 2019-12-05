@@ -44,6 +44,7 @@ if __name__ == "__main__":
       if tf_global_step % report_frequency == 0:
         total_time = time.time() - initial_time
         steps_per_second = tf_global_step / total_time
+        print("total_time:   ", total_time)
 
         average_loss = accumulated_loss / report_frequency
         print("[{}] loss={:.2f}, steps/s={:.2f}".format(tf_global_step, average_loss, steps_per_second))
