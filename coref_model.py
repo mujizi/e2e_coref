@@ -663,13 +663,13 @@ class CorefModel(object):
         print("Evaluated {}/{} examples.".format(example_num + 1, len(self.eval_data)))
 
     print('coref_predictions:', coref_predictions, len(coref_predictions))
-    tools.write_json('/home/patsnap/PycharmProjects/e2e/e2e-coref/coref_predictions.json', coref_predictions)
+    # tools.write_json('/home/patsnap/PycharmProjects/e2e/e2e-coref/coref_predictions.json', coref_predictions)
 
     """this evaluation code is used to solve CoNLL style dataset evaluetions."""
     summary_dict = {}
     conll_results = conll.evaluate_conll(self.config["conll_eval_path"], coref_predictions, official_stdout)
     average_f1 = sum(results["f"] for results in conll_results.values()) / len(conll_results)
-    summary_dict["Average F1 (conll)"] = average_f1
+    # summary_dict["Average F1 (conll)"] = average_f1
     # print("Average F1 (conll): {:.2f}%".format(average_f1))
 
     p,r,f = coref_evaluator.get_prf()
@@ -686,19 +686,19 @@ class CorefModel(object):
     print('\n', "Precision:", "\n")
     print("muc:", "{:.2f}%".format(muc_p * 100), '\n')
     print("b_cube:", "{:.2f}%".format(b_p * 100), '\n')
-    print("muc:", "{:.2f}%".format(ceaf_p * 100), '\n')
+    print("ceaf:", "{:.2f}%".format(ceaf_p * 100), '\n')
 
     print('\n', "Recall:", "\n")
     print("muc:", "{:.2f}%".format(muc_r * 100), '\n')
     print("b_cube:", "{:.2f}%".format(b_r * 100), '\n')
-    print("muc:", "{:.2f}%".format(ceaf_r * 100), '\n')
+    print("ceaf:", "{:.2f}%".format(ceaf_r * 100), '\n')
 
     print('\n', "F1:", "\n")
     print("muc:", "{:.2f}%".format(muc_f1 * 100), '\n')
     print("b_cube:", "{:.2f}%".format(b_f1 * 100), '\n')
-    print("muc:", "{:.2f}%".format(ceaf_f1 * 100), '\n')
+    print("ceaf:", "{:.2f}%".format(ceaf_f1 * 100), '\n')
 
-    return util.make_summary(summary_dict), average_f1
+    return util.make_summary(summary_dict), f
 
 
   # def evaluate_neuralcoref(self, session, official_stdout=False):

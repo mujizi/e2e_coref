@@ -28,22 +28,27 @@ def initialize_from_env():
   config = pyhocon.ConfigFactory.parse_file("experiments.conf")[name]
   config["log_dir"] = mkdirs(os.path.join(config["log_root"], name))
 
-  print(pyhocon.HOCONConverter.convert(config, "hocon"))
+  # print(pyhocon.HOCONConverter.convert(config, "hocon"))
   return config
+
 
 def copy_checkpoint(source, target):
   for ext in (".index", ".data-00000-of-00001"):
     shutil.copyfile(source + ext, target + ext)
 
+
 def make_summary(value_dict):
   return tf.Summary(value=[tf.Summary.Value(tag=k, simple_value=v) for k,v in value_dict.items()])
+
 
 def flatten(l):
   return [item for sublist in l for item in sublist]
 
+
 def set_gpus(*gpus):
   os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(g) for g in gpus)
   print("Setting CUDA_VISIBLE_DEVICES to: {}".format(os.environ["CUDA_VISIBLE_DEVICES"]))
+
 
 def mkdirs(path):
   try:
@@ -53,6 +58,7 @@ def mkdirs(path):
       raise
   return path
 
+
 def load_char_dict(char_vocab_path):
   vocab = [u"<unk>"]
   with codecs.open(char_vocab_path, encoding="utf-8") as f:
@@ -61,11 +67,14 @@ def load_char_dict(char_vocab_path):
   char_dict.update({c:i for i, c in enumerate(vocab)})
   return char_dict
 
+
 def maybe_divide(x, y):
   return 0 if y == 0 else x / float(y)
 
+
 def projection(inputs, output_size, initializer=None):
   return ffnn(inputs, 0, -1, output_size, dropout=None, output_weights_initializer=initializer)
+
 
 def highway(inputs, num_layers, dropout):
   for i in range(num_layers):
@@ -78,8 +87,10 @@ def highway(inputs, num_layers, dropout):
       inputs = f * j + (1 - f) * inputs
   return inputs
 
+
 def shape(x, dim):
   return x.get_shape()[dim].value or tf.shape(x)[dim]
+
 
 def ffnn(inputs, num_hidden_layers, hidden_size, output_size, dropout, output_weights_initializer=None):
   if len(inputs.get_shape()) > 3:

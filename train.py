@@ -11,7 +11,9 @@ import coref_model as cm
 import util
 
 if __name__ == "__main__":
+  os.environ["GPU"] = "0"
   config = util.initialize_from_env()
+  tf.test.gpu_device_name()
 
   report_frequency = config["report_frequency"]
   eval_frequency = config["eval_frequency"]

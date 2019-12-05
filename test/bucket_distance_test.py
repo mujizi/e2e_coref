@@ -12,7 +12,7 @@ def bucket_distance(distances):
     logspace_idx = tf.to_int32(tf.floor(tf.log(tf.to_float(distances)) / math.log(2))) + 3
     use_identity = tf.to_int32(distances <= 4)
     combined_idx = use_identity * distances + (1 - use_identity) * logspace_idx
-    return tf.clip_by_value(combined_idx, 0, 12)          # 12: 256+
+    return tf.clip_by_value(combined_idx, 0, 12)    # 12: 256+
 
 
 if __name__ == '__main__':
