@@ -95,7 +95,10 @@ class CorefModel(object):
     # Don't try to restore unused variables from the TF-Hub ELMo module.
     vars_to_restore = [v for v in tf.global_variables() if "module/" not in v.name]
     saver = tf.train.Saver(vars_to_restore)
+
     checkpoint_path = os.path.join(self.config["log_dir"], "model.max.ckpt")
+    # checkpoint_path = os.path.join(self.config["log_dir"], "model-4500")
+
     print("Restoring from {}".format(checkpoint_path))
     session.run(tf.global_variables_initializer())
     saver.restore(session, checkpoint_path)
@@ -152,6 +155,8 @@ class CorefModel(object):
     max_word_length = max(max(max(len(w) for w in s) for s in sentences), max(self.config["filter_widths"]))
     text_len = np.array([len(s) for s in sentences])
     tokens = [[""] * max_sentence_length for _ in sentences]
+    for token in tokens:
+        print(token)
 
     context_word_emb = np.zeros([len(sentences), max_sentence_length, self.context_embeddings.size])
     # print('context_word_emb', context_word_emb, context_word_emb.shape)
@@ -326,6 +331,9 @@ class CorefModel(object):
     candidate_starts = tf.tile(tf.expand_dims(tf.range(num_words), 1), [1, self.max_span_width]) # [num_words, max_span_width]
     candidate_ends = candidate_starts + tf.expand_dims(tf.range(self.max_span_width), 0) # [num_words, max_span_width]
 
+    """ add sentence candidate starts and candidate ends in this place. and padding max_span_width to max_sentence_len.
+        sentence_indices not used in this model input
+    """
     # print('candidate_starts_1', candidate_starts)
 
     candidate_start_sentence_indices = tf.gather(flattened_sentence_indices, candidate_starts) # [num_words, max_span_width]
@@ -336,15 +344,15 @@ class CorefModel(object):
     candidate_ends = tf.boolean_mask(tf.reshape(candidate_ends, [-1]), flattened_candidate_mask) # [num_candidates]
     candidate_sentence_indices = tf.boolean_mask(tf.reshape(candidate_start_sentence_indices, [-1]), flattened_candidate_mask) # [num_candidates]
 
-    # print('sentence_indices', sentence_indices)
-    # print('candidate_starts', candidate_starts)
-    # print('candidate_ends', candidate_ends)
+    "add sentences start and end in this place?"
+    # print('candidate_starts', candidate_starts, candidate_starts.shape)
+    # print('candidate_ends', candidate_ends, candidate_ends.shape)
     # print('candidate_start_sentence_indices', candidate_start_sentence_indices)
     # print('candidate_sentence_indices:', candidate_sentence_indices)
 
     candidate_cluster_ids = self.get_candidate_labels(candidate_starts, candidate_ends, gold_starts, gold_ends, cluster_ids) # [num_candidates]
     candidate_span_emb = self.get_span_emb(flattened_head_emb, context_outputs, candidate_starts, candidate_ends) # [num_candidates, emb]
-    candidate_mention_scores =  self.get_mention_scores(candidate_span_emb) # [k, 1]
+    candidate_mention_scores = self.get_mention_scores(candidate_span_emb) # [k, 1]
     candidate_mention_scores = tf.squeeze(candidate_mention_scores, 1) # [k]
 
     k = tf.to_int32(tf.floor(tf.to_float(tf.shape(context_outputs)[0]) * self.config["top_span_ratio"]))
@@ -481,8 +489,8 @@ class CorefModel(object):
     logspace_idx = tf.to_int32(tf.floor(tf.log(tf.to_float(distances))/math.log(2))) + 3
     use_identity = tf.to_int32(distances <= 4)
     combined_idx = use_identity * distances + (1 - use_identity) * logspace_idx
-    # return tf.clip_by_value(combined_idx, 0, 9)
-    return tf.clip_by_value(combined_idx, 0, 12)   # 256+
+    return tf.clip_by_value(combined_idx, 0, 9)
+    # return tf.clip_by_value(combined_idx, 0, 12)   # 256+
 
 
   def get_slow_antecedent_scores(self, top_span_emb, top_antecedents, top_antecedent_emb, top_antecedent_offsets, top_span_speaker_ids, genre_emb):
@@ -507,8 +515,8 @@ class CorefModel(object):
       """
 
       antecedent_distance_buckets = self.bucket_distance(top_antecedent_offsets) # [k, c]
-      # antecedent_distance_emb = tf.gather(tf.get_variable("antecedent_distance_emb", [10, self.config["feature_size"]]), antecedent_distance_buckets) # [k, c]
-      antecedent_distance_emb = tf.gather(tf.get_variable("antecedent_distance_emb", [13, self.config["feature_size"]]), antecedent_distance_buckets)  # [k, c]
+      antecedent_distance_emb = tf.gather(tf.get_variable("antecedent_distance_emb", [10, self.config["feature_size"]]), antecedent_distance_buckets) # [k, c]
+      # antecedent_distance_emb = tf.gather(tf.get_variable("antecedent_distance_emb", [13, self.config["feature_size"]]), antecedent_distance_buckets)  # [k, c]
       feature_emb_list.append(antecedent_distance_emb)
 
     feature_emb = tf.concat(feature_emb_list, 2) # [k, c, emb]
@@ -663,7 +671,7 @@ class CorefModel(object):
         print("Evaluated {}/{} examples.".format(example_num + 1, len(self.eval_data)))
 
     print('coref_predictions:', coref_predictions, len(coref_predictions))
-    # tools.write_json('/home/patsnap/PycharmProjects/e2e/e2e-coref/coref_predictions.json', coref_predictions)
+    tools.write_json('/home/patsnap/PycharmProjects/e2e/e2e-coref/predicted_data/coref_predictions.json', coref_predictions)
 
     """this evaluation code is used to solve CoNLL style dataset evaluetions."""
     summary_dict = {}
