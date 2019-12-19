@@ -39,7 +39,7 @@ class CorefEvaluator(object):
         return self.get_precision(), self.get_recall(), self.get_f1()
 
     def get_all_f1(self):
-        all_f1 = [e.get_f1 for e in self.evaluators]
+        all_f1 = [e.get_f1() for e in self.evaluators]
         return all_f1[0], all_f1[1], all_f1[2]
 
     def get_all_precision(self):

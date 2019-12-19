@@ -1,6 +1,6 @@
 from six.moves import input
 import tensorflow as tf
-import coref_model as cm
+import coref_model_sentence_span as cm
 import util
 
 import nltk

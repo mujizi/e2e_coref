@@ -19,6 +19,8 @@ import coref_ops
 import conll
 import metrics
 import tools
+import re
+NUM = re.compile(r'\d{4}')
 # import spacy
 # nlp = spacy.load('en')
 # import neuralcoref
@@ -55,6 +57,9 @@ class CorefModel(object):
     input_props.append((tf.int32, [None])) # Gold starts.
     input_props.append((tf.int32, [None])) # Gold ends.
     input_props.append((tf.int32, [None])) # Cluster ids.
+    input_props.append((tf.int32, [None]))  # sentence_start.
+    input_props.append((tf.int32, [None]))  # sentence_end.
+
 
     self.queue_input_tensors = [tf.placeholder(dtype, shape) for dtype, shape in input_props]
     dtypes, shapes = zip(*input_props)
@@ -96,8 +101,8 @@ class CorefModel(object):
     vars_to_restore = [v for v in tf.global_variables() if "module/" not in v.name]
     saver = tf.train.Saver(vars_to_restore)
 
-    checkpoint_path = os.path.join(self.config["log_dir"], "model.max.ckpt")
-    # checkpoint_path = os.path.join(self.config["log_dir"], "model-4500")
+    # checkpoint_path = os.path.join(self.config["log_dir"], "model.max.ckpt")
+    checkpoint_path = os.path.join(self.config["log_dir"], "model-4500")
 
     print("Restoring from {}".format(checkpoint_path))
     session.run(tf.global_variables_initializer())
@@ -114,6 +119,27 @@ class CorefModel(object):
     for i, s in enumerate(sentences):
       lm_emb[i, :s.shape[0], :, :] = s
     return lm_emb
+
+  def sentence_start_end_index(self, sentences):
+    """
+    :param sentences: sentences list example: [['i', 'like'], ['cat']]
+    :return: sentences start list and end list just like start:[0, 2], end:[1, 2]
+    """
+    start_l, end_l = [], []
+    offset = -1
+    for sentence in sentences:
+      start_ = offset + 1
+      end_ = len(sentence) + offset
+      try:
+        if sentence[0] == '[' and NUM.match(sentence[1]) and sentence[2] == ']':
+          start_ = start_ + 3
+      finally:
+        offset = offset + len(sentence)
+        if (start_ - end_ + 1) > 30:
+          start_l.append(start_)
+          end_l.append(end_)
+    assert len(start_l) == len(end_l)
+    return np.array(start_l), np.array(end_l)
 
   def tensorize_mentions(self, mentions):
     if len(mentions) > 0:
@@ -185,17 +211,20 @@ class CorefModel(object):
     genre = self.genres[doc_key[:2]]
 
     gold_starts, gold_ends = self.tensorize_mentions(gold_mentions)
+    sentence_index_start, sentence_index_end = self.sentence_start_end_index(sentences)
 
     lm_emb = self.load_lm_embeddings(doc_key)
 
-    example_tensors = (tokens, context_word_emb, head_word_emb, lm_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids)
+    # example_tensors = (tokens, context_word_emb, head_word_emb, lm_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids)
+    example_tensors = (tokens, context_word_emb, head_word_emb, lm_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids, sentence_index_start, sentence_index_end)
+
 
     if is_training and len(sentences) > self.config["max_training_sentences"]:
       return self.truncate_example(*example_tensors)
     else:
       return example_tensors
 
-  def truncate_example(self, tokens, context_word_emb, head_word_emb, lm_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids):
+  def truncate_example(self, tokens, context_word_emb, head_word_emb, lm_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids, sentence_index_start, sentence_index_end):
     max_training_sentences = self.config["max_training_sentences"]
     num_sentences = context_word_emb.shape[0]
     assert num_sentences > max_training_sentences
@@ -211,12 +240,24 @@ class CorefModel(object):
     text_len = text_len[sentence_offset:sentence_offset + max_training_sentences]
 
     speaker_ids = speaker_ids[word_offset: word_offset + num_words]
+
+    print("gold_start", gold_starts)
+    print("gold_end", gold_ends)
     gold_spans = np.logical_and(gold_ends >= word_offset, gold_starts < word_offset + num_words)
+    print("gold_spans", gold_spans)
+
     gold_starts = gold_starts[gold_spans] - word_offset
     gold_ends = gold_ends[gold_spans] - word_offset
+
+    """i want to get sentence start and end index
+    """
+    sentence_spans = np.logical_and(sentence_index_end >= word_offset, sentence_index_start < word_offset + num_words)
+    sentence_index_start = sentence_index_start[sentence_spans] - word_offset
+    sentence_index_end = sentence_index_end[sentence_spans] - word_offset
+
     cluster_ids = cluster_ids[gold_spans]
 
-    return tokens, context_word_emb, head_word_emb, lm_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids
+    return tokens, context_word_emb, head_word_emb, lm_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids, sentence_index_start, sentence_index_end
 
   def get_candidate_labels(self, candidate_starts, candidate_ends, labeled_starts, labeled_ends, labels):
     same_start = tf.equal(tf.expand_dims(labeled_starts, 1), tf.expand_dims(candidate_starts, 0)) # [num_labeled, num_candidates]
@@ -255,7 +296,7 @@ class CorefModel(object):
     top_fast_antecedent_scores += tf.log(tf.to_float(top_antecedents_mask)) # [k, c]
     return top_antecedents, top_antecedents_mask, top_fast_antecedent_scores, top_antecedent_offsets
 
-  def get_predictions_and_loss(self, tokens, context_word_emb, head_word_emb, lm_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids):
+  def get_predictions_and_loss(self, tokens, context_word_emb, head_word_emb, lm_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids, sentence_index_start, sentence_index_end):
     self.dropout = self.get_dropout(self.config["dropout_rate"], is_training)
     self.lexical_dropout = self.get_dropout(self.config["lexical_dropout_rate"], is_training)
     self.lstm_dropout = self.get_dropout(self.config["lstm_dropout_rate"], is_training)
@@ -344,11 +385,20 @@ class CorefModel(object):
     candidate_ends = tf.boolean_mask(tf.reshape(candidate_ends, [-1]), flattened_candidate_mask) # [num_candidates]
     candidate_sentence_indices = tf.boolean_mask(tf.reshape(candidate_start_sentence_indices, [-1]), flattened_candidate_mask) # [num_candidates]
 
-    "add sentences start and end in this place?"
-    # print('candidate_starts', candidate_starts, candidate_starts.shape)
-    # print('candidate_ends', candidate_ends, candidate_ends.shape)
-    # print('candidate_start_sentence_indices', candidate_start_sentence_indices)
-    # print('candidate_sentence_indices:', candidate_sentence_indices)
+    """this is my change in input queue, add sentence_index start and end in candidate. we want to add sentence level
+    span candidate.
+    """
+
+    candidate_starts = tf.concat([candidate_starts, sentence_index_start], axis=0)
+    candidate_ends = tf.concat([candidate_ends, sentence_index_end], axis=0)
+
+    """think of use padding to change the span embedding dimention in this place.
+    
+    candidate_cluster_ids compare between candidate and gold mention,example second
+    candidate is true, candidate_cluster_ids just like: [0, 1, 0]
+    
+    
+    """
 
     candidate_cluster_ids = self.get_candidate_labels(candidate_starts, candidate_ends, gold_starts, gold_ends, cluster_ids) # [num_candidates]
     candidate_span_emb = self.get_span_emb(flattened_head_emb, context_outputs, candidate_starts, candidate_ends) # [num_candidates, emb]
@@ -442,23 +492,44 @@ class CorefModel(object):
     span_width = 1 + span_ends - span_starts # [k]
 
     if self.config["use_features"]:
-      span_width_index = span_width - 1 # [k]
-      span_width_emb = tf.gather(tf.get_variable("span_width_embeddings", [self.config["max_span_width"], self.config["feature_size"]]), span_width_index) # [k, emb]
+      span_width_index = tf.minimum(self.config["max_sentence_width"] - 1, span_width - 1) # [k]
+      span_width_emb = tf.gather(tf.get_variable("span_width_embeddings", [self.config["max_sentence_width"], self.config["feature_size"]]), span_width_index) # [k, emb]
       span_width_emb = tf.nn.dropout(span_width_emb, self.dropout)
       span_emb_list.append(span_width_emb)
 
+      """
+      In this place, i want to padding the max_span len to compute head attention span embedding.
+      
+      """
     if self.config["model_heads"]:
-      span_indices = tf.expand_dims(tf.range(self.config["max_span_width"]), 0) + tf.expand_dims(span_starts, 1) # [k, max_span_width]
+      span_indices = tf.expand_dims(tf.range(self.config["max_sentence_width"]), 0) + tf.expand_dims(span_starts, 1) # [k, max_span_width]
       span_indices = tf.minimum(util.shape(context_outputs, 0) - 1, span_indices) # [k, max_span_width]
       span_text_emb = tf.gather(head_emb, span_indices) # [k, max_span_width, emb]
+
       with tf.variable_scope("head_scores"):
         self.head_scores = util.projection(context_outputs, 1) # [num_words, 1]
+
       span_head_scores = tf.gather(self.head_scores, span_indices) # [k, max_span_width, 1]
-      span_mask = tf.expand_dims(tf.sequence_mask(span_width, self.config["max_span_width"], dtype=tf.float32), 2) # [k, max_span_width, 1]
+      span_mask = tf.expand_dims(tf.sequence_mask(span_width, self.config["max_sentence_width"], dtype=tf.float32), 2) # [k, max_span_width, 1]
       span_head_scores += tf.log(span_mask) # [k, max_span_width, 1]
       span_attention = tf.nn.softmax(span_head_scores, 1) # [k, max_span_width, 1]
       span_head_emb = tf.reduce_sum(span_attention * span_text_emb, 1) # [k, emb]
       span_emb_list.append(span_head_emb)
+
+    # if self.config["model_heads"]:
+    #   span_indices = tf.expand_dims(tf.range(self.config["max_span_width"]), 0) + tf.expand_dims(span_starts,
+    #                                                                                              1)  # [k, max_span_width]
+    #   span_indices = tf.minimum(util.shape(context_outputs, 0) - 1, span_indices)  # [k, max_span_width]
+    #   span_text_emb = tf.gather(head_emb, span_indices)  # [k, max_span_width, emb]
+    #
+    #   with tf.variable_scope("head_scores"):
+    #     self.head_scores = util.projection(context_outputs, 1) # [num_words, 1]
+    #   span_head_scores = tf.gather(self.head_scores, span_indices) # [k, max_span_width, 1]
+    #   span_mask = tf.expand_dims(tf.sequence_mask(span_width, self.config["max_span_width"], dtype=tf.float32), 2) # [k, max_span_width, 1]
+    #   span_head_scores += tf.log(span_mask) # [k, max_span_width, 1]
+    #   span_attention = tf.nn.softmax(span_head_scores, 1) # [k, max_span_width, 1]
+    #   span_head_emb = tf.reduce_sum(span_attention * span_text_emb, 1) # [k, emb]
+    #   span_emb_list.append(span_head_emb)
 
     span_emb = tf.concat(span_emb_list, 1) # [k, emb]
     return span_emb # [k, emb]
@@ -511,7 +582,7 @@ class CorefModel(object):
     if self.config["use_features"]:
 
       """ i think of that if want to increase the distance of cluster pair, we can change the [10] antecedent_distance_emb,
-      and the bucket_distance function make some change in tf.clip_value xxx.
+      and the bucket_distance function.
       """
 
       antecedent_distance_buckets = self.bucket_distance(top_antecedent_offsets) # [k, c]
@@ -680,7 +751,7 @@ class CorefModel(object):
     # summary_dict["Average F1 (conll)"] = average_f1
     # print("Average F1 (conll): {:.2f}%".format(average_f1))
 
-    p,r,f = coref_evaluator.get_prf()
+    p, r, f = coref_evaluator.get_prf()
     summary_dict["Average F1 (py)"] = f
     print("Average F1 (py): {:.2f}%".format(f * 100))
     summary_dict["Average precision (py)"] = p

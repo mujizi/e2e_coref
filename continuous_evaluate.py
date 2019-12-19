@@ -9,7 +9,7 @@ import time
 import shutil
 
 import tensorflow as tf
-import coref_model as cm
+import coref_model_sentence_span as cm
 import util
 
 def copy_checkpoint(source, target):

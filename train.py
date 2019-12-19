@@ -7,7 +7,7 @@ import os
 import time
 
 import tensorflow as tf
-import coref_model as cm
+import coref_model_sentence_span as cm
 import util
 
 if __name__ == "__main__":
@@ -39,6 +39,7 @@ if __name__ == "__main__":
     initial_time = time.time()
     while True:
       tf_loss, tf_global_step, _ = session.run([model.loss, model.global_step, model.train_op])
+      # print(session.run())
       accumulated_loss += tf_loss
 
       if tf_global_step % report_frequency == 0:

@@ -4,7 +4,7 @@ from __future__ import print_function
 
 from six.moves import input
 import tensorflow as tf
-import coref_model as cm
+import coref_model_sentence_span as cm
 import util
 
 import nltk
@@ -39,19 +39,19 @@ def make_predictions(text, model):
   example = create_example(text)
   tensorized_example = model.tensorize_example(example, is_training=False)
 
-  # print('tensorized_example', tensorized_example)
-  # print('model.input_tensors', model.input_tensors)
+  print('tensorized_example', tensorized_example)
+  # print('model.input_tensors', tensorized_example)
 
   feed_dict = {i:t for i,t in zip(model.input_tensors, tensorized_example)}
   # print('feed_dict', feed_dict)
   _, _, _, mention_starts, mention_ends, antecedents, antecedent_scores, head_scores = session.run(model.predictions + [model.head_scores], feed_dict=feed_dict)
-  print("mention_starts", mention_starts, mention_starts.shape)
-  print("mention_ends", mention_ends, mention_starts.shape)
-  print("antecedents", antecedents, antecedents.shape)
-  print("antecedent_scores", antecedent_scores, antecedent_scores.shape)
+  # print("mention_starts", mention_starts, mention_starts.shape)
+  # print("mention_ends", mention_ends, mention_starts.shape)
+  # print("antecedents", antecedents, antecedents.shape)
+  # print("antecedent_scores", antecedent_scores, antecedent_scores.shape)
 
   predicted_antecedents = model.get_predicted_antecedents(antecedents, antecedent_scores)
-  print("predicted_antecedents", predicted_antecedents)
+  # print("predicted_antecedents", predicted_antecedents)
 
   example["predicted_clusters"], _ = model.get_predicted_clusters(mention_starts, mention_ends, predicted_antecedents)
   example["top_spans"] = zip((int(i) for i in mention_starts), (int(i) for i in mention_ends))
