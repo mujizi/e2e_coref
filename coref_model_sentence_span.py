@@ -135,7 +135,7 @@ class CorefModel(object):
           start_ = start_ + 3
       finally:
         offset = offset + len(sentence)
-        if (start_ - end_ + 1) > 30:
+        if (end_ - start_ + 1) > 30:
           start_l.append(start_)
           end_l.append(end_)
     assert len(start_l) == len(end_l)
