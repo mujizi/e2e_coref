@@ -63,33 +63,27 @@ class CorefModel(object):
         self.enqueue_op = queue.enqueue(self.queue_input_tensors)
         self.input_tensors = queue.dequeue()
 
-        self.predictions, self.loss = self.get_predictions_and_loss(*self.input_tensors)
+        self.predictions, self.loss, self.top_list = self.get_predictions_and_loss(*self.input_tensors)
 
         """adversarial train, used FGM"""
-        self.candidate_span_emb_r, _, _, _, _, _, _, _ = self.predictions
-        gradients_r = tf.gradients(self.predictions, self.candidate_span_emb_r, aggregation_method=tf.AggregationMethod.EXPERIMENTAL_ACCUMULATE_N)
-        # gradients_norm, _ = tf.clip_by_global_norm(gradients_r, self.config["max_gradient_norm"])
-        gradients_r = tf.stop_gradient(gradients_r)
-        norm = tf.norm(gradients_r)
-        r = gradients_r / norm
+        self.top_embed, top_ids, top_scores, top_speaker, genre_emb_r, k_r = self.top_list
+        self.copy_top_embed = tf.identity(self.top_embed)
 
-        """save raw candidate_emb"""
-        # raw_candidate_emb = copy.deepcopy(self.candidate_span_emb_r)
-        self.raw_candidate_emb = tf.identity(self.candidate_span_emb_r)
+        with tf.name_scope('ad') as scope:
+            self.ad_loss = self.adversarial_loss(self.copy_top_embed, top_ids, top_scores, top_speaker, genre_emb_r, k_r)
+            gradients_r = tf.gradients(self.ad_loss, self.copy_top_embed, aggregation_method=tf.AggregationMethod.EXPERIMENTAL_ACCUMULATE_N)
+            gradients_r = tf.stop_gradient(gradients_r)
+            norm = tf.norm(gradients_r)
+            r = gradients_r / norm
+            self.copy_top_embed = self.copy_top_embed + r
 
-        self.candidate_span_emb_r = self.candidate_span_emb_r + r
         self.global_step = tf.Variable(0, name="global_step", trainable=False)
         self.reset_global_step = tf.assign(self.global_step, 0)
         learning_rate = tf.train.exponential_decay(self.config["learning_rate"], self.global_step,
                                                    self.config["decay_frequency"], self.config["decay_rate"],
                                                    staircase=True)
         trainable_params = tf.trainable_variables()
-        gradients = tf.gradients(self.loss, trainable_params)
-
-        """restore raw candidate emb"""
-        # tf.assign(self.candidate_span_emb_r, tf.Variable(raw_candidate_emb))
-        self.candidate_span_emb_r = raw_candidate_emb
-
+        gradients = tf.gradients(self.loss * 0.6 + self.ad_loss * 0.4, trainable_params)
         gradients, _ = tf.clip_by_global_norm(gradients, self.config["max_gradient_norm"])
         optimizers = {
             "adam": tf.train.AdamOptimizer,
@@ -532,9 +526,78 @@ class CorefModel(object):
         loss = tf.reduce_sum(loss)  # []
 
         return [candidate_span_emb, candidate_starts, candidate_ends, candidate_mention_scores, top_span_starts, top_span_ends,
-                top_antecedents, top_antecedent_scores], loss
+                top_antecedents, top_antecedent_scores], loss, [top_span_emb, top_span_cluster_ids, top_span_mention_scores, top_span_speaker_ids,
+                                                                genre_emb, k]
 
-    def get_span_emb(self, head_emb, context_outputs, span_starts, span_ends):
+    def adversarial_loss(self, top_span_emb, top_span_cluster_ids, top_span_mention_scores, top_span_speaker_ids, genre_emb, k):
+        c = tf.minimum(self.config["max_top_antecedents"], k)
+
+        """Stage 1 competed: k candidate mentions.
+        """
+
+        if self.config["coarse_to_fine"]:
+            top_antecedents, top_antecedents_mask, top_fast_antecedent_scores, top_antecedent_offsets = self.coarse_to_fine_pruning(
+                top_span_emb, top_span_mention_scores, c)
+        else:
+            top_antecedents, top_antecedents_mask, top_fast_antecedent_scores, top_antecedent_offsets = self.distance_pruning(
+                top_span_emb, top_span_mention_scores, c)
+
+        """Stage 2 competed: get each of k mensions c antecedents 
+        shape: [k, c]   
+        """
+
+        dummy_scores = tf.zeros([k, 1])  # [k, 1]
+        for i in range(self.config["coref_depth"]):
+            with tf.variable_scope("coref_layer", reuse=(i > 0)):
+                top_antecedent_emb = tf.gather(top_span_emb, top_antecedents)  # [k, c, emb]
+                top_antecedent_scores = top_fast_antecedent_scores + self.get_slow_antecedent_scores(top_span_emb,
+                                                                                                     top_antecedents,
+                                                                                                     top_antecedent_emb,
+                                                                                                     top_antecedent_offsets,
+                                                                                                     top_span_speaker_ids,
+                                                                                                     genre_emb)  # [k, c]
+                top_antecedent_weights = tf.nn.softmax(
+                    tf.concat([dummy_scores, top_antecedent_scores], 1))  # [k, c + 1]
+                top_antecedent_emb = tf.concat([tf.expand_dims(top_span_emb, 1), top_antecedent_emb],
+                                               1)  # [k, c + 1, emb]
+                attended_span_emb = tf.reduce_sum(tf.expand_dims(top_antecedent_weights, 2) * top_antecedent_emb,
+                                                  1)  # [k, emb]
+                with tf.variable_scope("f"):
+                    f = tf.sigmoid(util.projection(tf.concat([top_span_emb, attended_span_emb], 1),
+                                                   util.shape(top_span_emb, -1)))  # [k, emb]
+                    top_span_emb = f * attended_span_emb + (1 - f) * top_span_emb  # [k, emb]
+
+        """Stage 3 used original paper section 3 function: the antecedent and top_span composed a pairs (coref entity, demonstraction
+        pronoun) and computer the pair of score s(gi, gj), s(gi, gj) = top_fast_antecedent_scores + get_slow_antecdents, via softmax,
+        get the weights of each k span's (c + 1) antecedents weight. P(yi), yi is i mention in top_span. This is a attention mechanism
+        get a new embedding ai, ai are calculate by attention mechanism. And then concatenate ai and gi. matmul W and via sigmoid to 
+        get a gatekeeper(fi). Finally, gi_final = fi * gi + (1 - fi) * ai. 
+        shape: [k, emb]
+        """
+
+        top_antecedent_scores = tf.concat([dummy_scores, top_antecedent_scores], 1)  # [k, c + 1]
+
+        top_antecedent_cluster_ids = tf.gather(top_span_cluster_ids, top_antecedents)  # [k, c]
+        top_antecedent_cluster_ids += tf.to_int32(tf.log(tf.to_float(top_antecedents_mask)))  # [k, c]
+        same_cluster_indicator = tf.equal(top_antecedent_cluster_ids, tf.expand_dims(top_span_cluster_ids, 1))  # [k, c]
+        non_dummy_indicator = tf.expand_dims(top_span_cluster_ids > 0, 1)  # [k, 1]
+        pairwise_labels = tf.logical_and(same_cluster_indicator, non_dummy_indicator)  # [k, c]
+        dummy_labels = tf.logical_not(tf.reduce_any(pairwise_labels, 1, keepdims=True))  # [k, 1]
+        top_antecedent_labels = tf.concat([dummy_labels, pairwise_labels], 1)  # [k, c + 1]
+
+        # print('top_antecedent_scores', top_antecedent_scores, top_antecedent_scores.shape)
+        # print('top_antecedent_labels', top_antecedent_labels, top_antecedent_labels.shape)
+
+        loss = self.softmax_loss(top_antecedent_scores, top_antecedent_labels)  # [k]
+
+        """result of k antecedents's softmax loss. 
+        shape: [k]
+        """
+
+        loss = tf.reduce_sum(loss)  # []
+        return loss
+
+    def dget_span_emb(self, head_emb, context_outputs, span_starts, span_ends):
         span_emb_list = []
 
         span_start_emb = tf.gather(context_outputs, span_starts)  # [k, emb]

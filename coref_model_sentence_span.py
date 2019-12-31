@@ -779,7 +779,36 @@ class CorefModel(object):
 
     return util.make_summary(summary_dict), f
 
+  def analysis_top_score(self, session, official_stdout=False):
+    self.load_eval_data()
 
+    coref_predictions = {}
+    coref_evaluator = metrics.CorefEvaluator()
+
+    for example_num, (tensorized_example, example) in enumerate(self.eval_data):
+      tokens, context_word_emb, head_word_emb, lm_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, _ = tensorized_example
+      print("gold_start:", gold_starts)
+      print("gold_end:", gold_ends)
+      print(sum(tokens, []))
+
+      feed_dict = {i:t for i,t in zip(self.input_tensors, tensorized_example)}
+      candidate_starts, candidate_ends, candidate_mention_scores, top_span_starts, top_span_ends, top_antecedents, top_antecedent_scores = session.run(self.predictions, feed_dict=feed_dict)
+      print('candidate_starts', candidate_starts)
+      print('candidate_ends', candidate_ends)
+      print('top_span_starts', top_span_starts, top_span_ends.shape)
+      print('top_span_ends', top_span_ends, top_span_ends.shape)
+      print('top_antecedent_scores', top_antecedent_scores, top_antecedent_scores.shape)
+      predicted_antecedents = self.get_predicted_antecedents(top_antecedents, top_antecedent_scores)
+
+      print('predicted_antecedents', predicted_antecedents)
+
+      coref_predictions[example["doc_key"]] = self.evaluate_coref(top_span_starts, top_span_ends, predicted_antecedents,
+                                                                  example["clusters"], coref_evaluator)
+
+
+
+
+"""this code is used to spacy neuralcoref code evaluation"""
   # def evaluate_neuralcoref(self, session, official_stdout=False):
   #   self.load_eval_data()
   #   coref_predictions = {}

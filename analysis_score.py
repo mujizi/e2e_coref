@@ -15,6 +15,4 @@ if __name__ == "__main__":
   model = cm.CorefModel(config)
   with tf.Session() as session:
     model.restore(session)
-    model.evaluate(session, official_stdout=True)
-    # model.load_eval_data()
-    # print(model.eval_data)
+    model.analysis_top_score(session, official_stdout=True)
